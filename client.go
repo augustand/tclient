@@ -7,24 +7,41 @@ import (
 	"net"
 	"bufio"
 	"time"
+	"fmt"
+	"math"
 )
 
 type Client struct {
-	Address    string       // 服务地址
-	Port       string       // 服务端口
-	Conn       *net.TCPConn // 当前的连接，如果 nil 表示没有连接
-	maxRetry   int          // 最大重试次数
-	quit       chan bool    //当服务器发出结束的标志时退出
-	isAlive    bool         // 判断是否连接成功
-	ConnTime   time.Time    //连接时间
-	VerifyKey  string       //连接验证KEY
-	ConnVerify bool         //是否验证
+	Address       string            // 服务地址
+	Port          string            // 服务端口
+	conn          chan *net.TCPConn // 当前的连接，如果 nil 表示没有连接
+	Conn          *net.TCPConn
+	maxRetry      int               // 最大重试次数
+	quit          chan bool         // 当服务器发出结束的标志时退出
+	isAlive       bool              // 判断是否连接成功
+	ConnTime      time.Time         // 连接时间
+	VerifyKey     string            // 连接验证KEY
+	ConnVerify    bool              // 是否验证
+	isExceptional chan bool         // 连接发生异常
 }
 
+// 连接成功后回调这个函数
 func (c *Client)OnConnect(f func(c *Client)) {
 	if c.isAlive {
 		f(c)
+	} else {
+		fmt.Println("connected failed")
 	}
+}
+
+func (c *Client)reTry() {
+	if c.maxRetry == 6 {
+		c.maxRetry = 1
+		return
+	}
+	println("等待时间%d", int(math.Pow(2, float64(c.maxRetry))))
+	time.Sleep(time.Duration(math.Pow(2, float64(c.maxRetry))) * time.Second)
+	c.maxRetry += 1
 }
 
 func (c *Client)OnDisConnect(f func(c *Client)) {
@@ -36,66 +53,175 @@ func (c *Client)OnError(f func(error)) {
 }
 
 func (c *Client) Close() {
-	quit := <-c.quit
-	if quit {
+	if <-c.quit {
+		println("do quit")
 		c.Conn.Close()
 	}
-
 }
 
 func (c *Client) OnMessage(f func(data string)) {
-	go (func(conn *net.TCPConn) {
-		reader := bufio.NewReader(conn)
+
+	go (func(c *Client) {
 		for {
-			msg, err := reader.ReadString('\n')
-			msg = strings.Trim(msg, "\r\n")
-			if err == io.EOF {
-				trigger.Fire(OnDisConnect, c)
-				c.quit <- true
-				break
-			} else if err != nil {
-				trigger.Fire(OnError, err)
-				c.quit <- true
-				break
-			} else {
-				f(msg)
+			select {
+			case conn := <-c.conn:
+
+			//c.Conn.SetReadDeadline(time.Now().Add(time.Second * 4))
+
+				println("接收消息")
+				reader := bufio.NewReader(conn)
+				try1:
+				for {
+					msg, err := reader.ReadString('\n')
+					msg = strings.Trim(msg, "\r\n")
+
+					println(conn.LocalAddr().String())
+
+					if err == io.EOF {
+						println("暂时没有消息")
+						c.isExceptional <- true
+						break try1
+					} else {
+						f(msg)
+					}
+				}
+				println("结束消息")
 			}
 		}
-	})(c.Conn)
+	})(c)
 }
 
-func NewClient(addr, port string) (*Client, error) {
 
+
+// 重新连接服务器
+func (c *Client)reConnect() {
+
+	go func(c *Client) {
+		for {
+			select {
+			case <-c.isExceptional:
+
+				var (
+					err error
+					conn *net.TCPConn
+				)
+
+				conn, err = connect(c.Address, c.Port)
+				if err != nil {
+					c.isExceptional <- true
+					c.Conn = nil
+					fmt.Println("尝试重新连接")
+					c.reTry()
+				} else {
+					c.isAlive = true
+					c.maxRetry = 1
+					c.Conn = conn
+					c.conn <- conn
+					c.isExceptional = make(chan bool, 100)
+					fmt.Println("连接成功")
+				}
+			}
+		}
+	}(c)
+
+}
+
+// 连接服务器
+func connect(addr, port string) (*net.TCPConn, error) {
 	var (
 		err error
 		tcpAddr *net.TCPAddr
 		conn *net.TCPConn
 	)
 
-	c := Client{}
-
-	c.quit = make(chan bool)
-
-	c.Address = addr
-	c.Port = port
-
 	tcpAddr, err = net.ResolveTCPAddr("tcp", addr + ":" + port) //获取一个TCP地址信息,TCPAddr
 	if err != nil {
-		c.isAlive = false
 		return nil, err
 	}
 
 	conn, err = net.DialTCP("tcp", nil, tcpAddr) //创建一个TCP连接:TCPConn
 	if err != nil {
-		c.isAlive = false
 		return nil, err
 	}
+	return conn, nil
+}
 
-	c.isAlive = true
-	c.Conn = conn
-	c.maxRetry = 3
+func NewClient(addr, port string) (*Client) {
+	c := Client{}
+	c.maxRetry = 1
 
-	return &c, nil
+	c.quit = make(chan bool)
+	c.isExceptional = make(chan bool, 100)
+	c.conn = make(chan *net.TCPConn, 2)
+
+	c.Address = addr
+	c.Port = port
+	c.isExceptional <- true
+	c.reConnect()
+	return &c
 }
 
 
+//else if err != nil {
+
+//a := c.isconnect()
+//
+//if a != nil {
+//	println("断开了连接")
+//	c.Conn.Close()
+//	c.isExceptional <- true
+//	println(len(c.isExceptional))
+//	println("isExceptional")
+//	println(a.Error())
+//	break try1
+//}
+
+//if strings.Index(err.Error(), "timeout") != -1 {
+//	println(len(c.isExceptional))
+//	println("isExceptional")
+//	println(err.Error())
+//	time.Sleep(time.Second * 5)
+//	c.isExceptional <- true
+//	break try1
+//}
+
+//a := c.connect()
+//if a != nil {
+//c.isExceptional <- true
+//println("isExceptional")
+//println(err.Error())
+//	println(len(c.isExceptional))
+//	println(a.Error())
+//	println("isExceptional")
+//break try1
+//}
+//
+//println(err.Error())
+//time.Sleep(time.Second * 2)
+//println(err.Error())
+//break try1
+
+//c.reConnect()
+//c.quit <- true
+//}
+
+//go func() {
+//	for {
+//
+//		select {
+//		//case <-c.isOK:
+//		//	println("ok")
+//		case <-time.After(10 * time.Second):
+//
+//			if c.isconnect() != nil {
+//				c.isExceptional <- true
+//			}
+//		}
+//	}
+//}()
+
+
+//else {
+//		conn.SetDeadline(time.Now().Add(time.Second * 2))
+//		conn.SetKeepAlive(true)
+//	}

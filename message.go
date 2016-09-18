@@ -5,4 +5,3 @@ type Message struct {
 	Event   string      // 事件名字
 	MsgBody interface{} // 消息体
 }
-

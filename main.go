@@ -8,10 +8,7 @@ import (
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
-	c, err := NewClient("127.0.0.1", "1235")
-	if err != nil {
-		println(err)
-	}
+	c := NewClient("127.0.0.1", "1235")
 	defer c.Close()
 
 	c.OnConnect(func(c *Client) {

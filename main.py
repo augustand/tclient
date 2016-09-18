@@ -14,18 +14,25 @@ s.bind((host, port))  # 注意，bind函数的参数只有一个，是（host,po
 s.listen(3)
 
 client, ipaddr = s.accept()
-
-for i in range(10):
-    # print "Got a connect from %s" % str(ipaddr)
+for i in range(10000):
+    try:
+        print i
+        print ipaddr
 
     # data = client.recv(1024)
 
     # print "%d receive data:  %s" % (i, data)
 
     # client.send("echo:" + data + "\n")
-    print i
-    client.send('{"token":"2345"}\n')
-    # time.sleep(1)
+        client.send(str(i)+'{"token":"2345"}\n')
+        time.sleep(0.5)
+    except:
+        client, ipaddr = s.accept()
 
-time.sleep(100)
+    # time.sleep(1)
+#for i in range(10000):
+ #   time.sleep(3)
+  #  print s.accept()
+
+time.sleep(10000)
 client.close()
