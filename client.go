@@ -12,6 +12,7 @@ import (
 )
 
 type Client struct {
+	Name          string            // 设置客户端的名字,默认为ip:port
 	Address       string            // 服务地址
 	Port          string            // 服务端口
 	conn          chan *net.TCPConn // 当前的连接，如果 nil 表示没有连接
@@ -26,11 +27,10 @@ type Client struct {
 }
 
 // 连接成功后回调这个函数
-func (c *Client)OnConnect(f func(c *Client)) {
-	if c.isAlive {
-		f(c)
-	} else {
-		fmt.Println("connected failed")
+func (c *Client)OnConnect(f func()) {
+	trigger.On(OnConnect, f)
+	if c.Conn != nil {
+		f()
 	}
 }
 
@@ -39,12 +39,14 @@ func (c *Client)reTry() {
 		c.maxRetry = 1
 		return
 	}
-	println("等待时间%d", int(math.Pow(2, float64(c.maxRetry))))
-	time.Sleep(time.Duration(math.Pow(2, float64(c.maxRetry))) * time.Second)
+
+	t := time.Duration(math.Pow(2, float64(c.maxRetry)))
+	fmt.Println("等待时间%d", t)
+	time.Sleep(t * time.Second)
 	c.maxRetry += 1
 }
 
-func (c *Client)OnDisConnect(f func(c *Client)) {
+func (c *Client)OnDisConnect(f func()) {
 	trigger.On(OnDisConnect, f)
 }
 
@@ -53,42 +55,52 @@ func (c *Client)OnError(f func(error)) {
 }
 
 func (c *Client) Close() {
-	if <-c.quit {
-		println("do quit")
+	if <-c.quit && c.Conn != nil {
+		fmt.Println("do quit")
 		c.Conn.Close()
+
 	}
+}
+
+func (c *Client) Sent(data string) {
+	go func(c *Client) {
+		_, err := c.Conn.Write([]byte(data))
+		if err != nil {
+			println(err.Error())
+		}
+		//println(n)
+	}(c)
 }
 
 func (c *Client) OnMessage(f func(data string)) {
 
-	go (func(c *Client) {
+	go func(c *Client) {
 		for {
 			select {
 			case conn := <-c.conn:
 
 			//c.Conn.SetReadDeadline(time.Now().Add(time.Second * 4))
+				time.Sleep(time.Millisecond * 100)
 
-				println("接收消息")
+			//println("接收消息")
 				reader := bufio.NewReader(conn)
 				try1:
 				for {
 					msg, err := reader.ReadString('\n')
 					msg = strings.Trim(msg, "\r\n")
-
-					println(conn.LocalAddr().String())
-
 					if err == io.EOF {
 						println("暂时没有消息")
 						c.isExceptional <- true
+						trigger.Fire(OnDisConnect)
 						break try1
 					} else {
 						f(msg)
 					}
 				}
-				println("结束消息")
+			//println("结束消息")
 			}
 		}
-	})(c)
+	}(c)
 }
 
 
@@ -118,12 +130,13 @@ func (c *Client)reConnect() {
 					c.Conn = conn
 					c.conn <- conn
 					c.isExceptional = make(chan bool, 100)
-					fmt.Println("连接成功")
+
+					trigger.Fire(OnConnect)
+					//fmt.Println("连接成功")
 				}
 			}
 		}
 	}(c)
-
 }
 
 // 连接服务器

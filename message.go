@@ -1,7 +1,8 @@
 package main
 
 type Message struct {
-	MsgType string      // 消息类型,text,json
-	Event   string      // 事件名字
-	MsgBody interface{} // 消息体
+	Order string `json:"order,omitempty"` // 指令名字
+	Data  string `json:"data,omitempty"`  // 消息体
 }
+
+

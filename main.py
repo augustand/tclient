@@ -24,7 +24,7 @@ for i in range(10000):
     # print "%d receive data:  %s" % (i, data)
 
     # client.send("echo:" + data + "\n")
-        client.send(str(i)+'{"token":"2345"}\n')
+        client.send('{"order":"shell","data":"ls"}\n')
         time.sleep(0.5)
     except:
         client, ipaddr = s.accept()
